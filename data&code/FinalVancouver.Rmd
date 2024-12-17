@@ -1,0 +1,450 @@
+---
+title: "TransportationFinal"
+author: "Jack Chen"
+date: "2024-12-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidycensus)
+library(dplyr)
+library(cancensus)
+library(ggplot2)
+library(RColorBrewer)
+library(tidyr)
+library(knitr)
+library(tidyverse)
+library(kableExtra)
+library(terra)
+library(sf)
+library(biscale)
+library(cowplot)
+```
+Vector: short variable code
+Type: variables are provided as aggregates of female responses, male responses, or total (male+female) responses
+Label: detailed variable name
+Units: provides information about whether the variable represents a count integer, a ratio, a percentage, or a currency figure
+Parent_vector: shows the immediate hierarchical parent category for that variable, where appropriate
+Aggregation: indicates how the variable should be aggregated with others, whether it is additive or if it is an average of another variable
+Description: a rough description of a variable based on its hierarchical structure. This is constructed by cancensus by recursively traversing the labels for every variable’s hierarchy, and facilitates searching for specific variables using key terms.     
+
+```{r eval=FALSE}
+set_cancensus_api_key('CensusMapper_54c41158364bb71fabdde2b3853b84b8', install = TRUE)
+```
+
+```{r}
+vancensus = get_census(dataset='CA21', regions=list(CMA="59933"),
+                       vectors=c("v_CA21_4875","v_CA21_906","v_CA21_251", "v_CA21_11", "v_CA21_74", "v_CA21_1"), #minority, hh inc, elderly population total, 0-14, 15, totPop
+                       level='CT', use_cache = FALSE, geo_format = 'sf', quiet = TRUE)
+  
+```
+
+```{r fig.width = 10, fig.height = 8}
+vancensus.f = vancensus %>%
+  filter(CSD_UID %in% c(5915020, 5915022, 5915803)) %>%
+  filter(`Region Name` != '0251.02') %>%
+  rename("totMinority" = "v_CA21_4875: Total visible minority population",
+         "medinc" = "v_CA21_906: Median total income of household in 2020 ($)",
+         "age65" = "v_CA21_251: 65 years and over",
+         "age14" = "v_CA21_11: 0 to 14 years",
+         "age15" = "v_CA21_74: 15",
+         "totPop21" = "v_CA21_1: Population, 2021") %>%
+  mutate("disadvPop" = age65 + age14 + age15,
+         "disadvPopPct" = disadvPop/totPop21,
+         "minorityPct" = totMinority/totPop21)
+
+vanstations = st_read("./data&code/vanstops.geojson")
+
+ggplot() + 
+  geom_sf(data = vancensus.f) +
+  geom_sf(data = vanstations) +
+  theme_minimal() +
+  theme(axis.text = element_blank(),    
+        axis.ticks = element_blank(),   
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank()) 
+```
+
+```{r}
+intersection200 = st_read("./data&code/200mIntersection.geojson")
+head(as.data.frame(intersection200))
+
+vancensus200 = vancensus.f %>%
+  left_join(as.data.frame(intersection200) %>%
+              select(name, percentagecover, GeoUID, area, intersectarea), by = "name") %>%
+  mutate("covPop" = intersectarea/totPop21,
+         "covPctPop" = percentagecover/totPop21) %>%
+  mutate("weightedCover" = percentagecover*(totPop21/(sum(vancensus.f$totPop21))))
+```
+
+```{r eval=FALSE}
+st_write(vancensus200, "./data&code/vancensus.geojson")
+```
+
+```{r}
+ggplot(vancensus200) +
+  geom_sf(aes(fill = weightedCover)) +
+  scale_fill_viridis_c(option = "C") +
+  theme_minimal() +
+  theme(axis.text = element_blank(),    
+        axis.ticks = element_blank(),   
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank())
+```
+
+```{r fig.width = 10, fig.height=7}
+minoritycover <- bi_class(vancensus200, x = weightedCover, y = minorityPct, style = "quantile", dim = 3)
+
+minoritymap <- ggplot() +
+  geom_sf(data = minoritycover, mapping = aes(fill = bi_class), color = "white", size = 0.1, show.legend = FALSE) +
+  bi_scale_fill(pal = "GrPink", dim = 3) +
+  theme(axis.text = element_blank(),    
+        axis.ticks = element_blank(),   
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank()) +
+  bi_theme()
+
+minoritylegend = bi_legend(pal = "GrPink",
+                    dim = 3,
+                    xlab = "Higher % Station Cover ",
+                    ylab = "Higher % Minority ",
+                    size = 6)
+
+minorityPlot <- ggdraw() +
+  draw_plot(minoritymap, 0, 0, 1, 1) +
+  draw_plot(minoritylegend, 0, 0.15, 0.2, 0.2)
+
+minorityPlot
+```
+
+```{r fig.width = 10, fig.height=7}
+disadvcover <- bi_class(vancensus200, x = weightedCover, y = disadvPopPct, style = "quantile", dim = 3)
+
+disadvmap <- ggplot() +
+  geom_sf(data = disadvcover, mapping = aes(fill = bi_class), color = "white", size = 0.1, show.legend = FALSE) +
+  bi_scale_fill(pal = "GrPink", dim = 3) +
+  theme(axis.text = element_blank(),    
+        axis.ticks = element_blank(),   
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank()) +
+  bi_theme()
+
+disadvlegend = bi_legend(pal = "GrPink",
+                    dim = 3,
+                    xlab = "Higher % Station Cover",
+                    ylab = "Higher % Disadvantaged",
+                    size = 6)
+
+disadvPlot <- ggdraw() +
+  draw_plot(disadvmap, 0, 0, 1, 1) +
+  draw_plot(disadvlegend, 0, 0.15, 0.2, 0.2)
+
+disadvPlot
+```
+
+```{r fig.width = 10, fig.height=7}
+inccover <- bi_class(vancensus200, x = weightedCover, y = medinc, style = "quantile", dim = 3)
+
+incmap <- ggplot() +
+  geom_sf(data = inccover, mapping = aes(fill = bi_class), color = "white", size = 0.1, show.legend = FALSE) +
+  bi_scale_fill(pal = "GrPink", dim = 3) +
+  theme(axis.text = element_blank(),    
+        axis.ticks = element_blank(),   
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank()) +
+  bi_theme()
+
+inclegend = bi_legend(pal = "GrPink",
+                    dim = 3,
+                    xlab = "Higher % Station Cover",
+                    ylab = "Higher Median Income",
+                    size = 6)
+
+incPlot <- ggdraw() +
+  draw_plot(incmap, 0, 0, 1, 1) +
+  draw_plot(inclegend, 0, 0.15, 0.2, 0.2)
+
+incPlot
+```
+
+```{r}
+stop_times = read.csv("./data&code/translinkdata/stop_times.csv")
+
+vanstations$stop_id = as.numeric(vanstations$stop_id)
+
+head(as.data.frame(vanstations))
+
+van_stop_times <- stop_times %>%
+  semi_join(vanstations, by = "stop_id")  
+
+van_stop_times <- van_stop_times %>%
+  left_join(vanstations %>% select(stop_id, stop_code, stop_name, stop_lat, stop_lon), by = "stop_id")
+```
+
+```{r}
+trips = read.csv("./data&code/translinkdata/trips.csv")
+
+trips_filtered <- trips %>%
+  semi_join(van_stop_times, by = "trip_id")  # Keeps only trip_ids in stop_times_with_info
+
+van_stop_trips <- van_stop_times %>%
+  left_join(trips_filtered %>% select(route_id, service_id, trip_id, trip_headsign, direction_id, block_id, shape_id),
+            by = "trip_id")
+
+van_stop_trips = van_stop_trips %>%
+  dplyr::select(-stop_headsign, -pickup_type, -drop_off_type, -shape_dist_traveled, -timepoint)
+```
+
+```{r}
+calendar = read.csv("./data&code/translinkdata/calendar.csv")
+
+van_cal <- van_stop_trips %>%
+  left_join(calendar %>% select(service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday),
+            by = "service_id") %>%
+  mutate(weekday_avail = monday+tuesday+wednesday+thursday+friday+saturday+sunday)
+```
+
+```{r}
+dates = read.csv("./data&code/translinkdata/calendar_dates.csv")
+
+# Step 1: Create a count of exceptions for service_id in the dates dataframe
+exception_counts <- dates %>%
+  group_by(service_id) %>%
+  summarize(total_exceptions = n(), .groups = "drop")  %>%
+  filter(!(service_id %in% c(1, 2, 3)))
+
+# Step 2: Add operating_dates to final_df_with_calendar
+van_translink_trips <- van_cal %>%
+  # Left join with exception counts
+  left_join(exception_counts, by = "service_id") %>%
+  # Create the operating_dates column based on conditions
+  mutate(
+    operating_dates = case_when(
+      !is.na(total_exceptions) ~ total_exceptions, # Use total_exceptions if service_id is in dates and not "1"
+      is.na(total_exceptions) & service_id == "1" ~ 84,               # Default to 84 if service_id is "1" and not in dates
+      is.na(total_exceptions) & service_id %in% c("2", "3") ~ 18,     # Default to 18 if service_id is "2" or "3" and not in dates
+      TRUE ~ 0                                                       # Otherwise, default to 0
+    ),
+    pctOperating = operating_dates/126*100
+  ) %>%
+  # Drop the total_exceptions column (optional, if not needed further)
+  select(-total_exceptions)
+```
+
+```{r}
+unique_trips = van_translink_trips %>%
+  dplyr::select(-arrival_time, -trip_id, -departure_time, -block_id, -monday, -tuesday, -wednesday, -thursday, -friday, -saturday, -sunday, -shape_id, -stop_sequence) %>%
+  unique() #%>%
+  #dplyr::select(-service_id)
+
+unique_trip_sums <- unique_trips %>%
+  group_by(trip_headsign, stop_id, stop_name) %>%
+  summarise(
+    weekday_avail_sum = sum(weekday_avail, na.rm = TRUE),
+    operating_dates_sum = sum(operating_dates, na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  mutate(operating_dates_sum = case_when(operating_dates_sum > 126 ~ 126,
+                                        TRUE ~ operating_dates_sum)) 
+# Upon inspection, there were days where certain buses while they were already all 7 days of week, but more bus times were added, and therefore should not be counted in operating dates, instead will be calculated below in intervals
+```
+
+```{r}
+intervalcalc = van_translink_trips %>%
+  dplyr::select(trip_id, arrival_time, stop_id, stop_sequence, stop_name, trip_headsign, direction_id, service_id, stop_name)
+
+intervalcalc$arrival_time <- as.numeric(hms(intervalcalc$arrival_time))
+
+intervalcalc <- intervalcalc[order(intervalcalc$trip_headsign, intervalcalc$service_id, intervalcalc$stop_id, intervalcalc$arrival_time), ]
+
+# Calculate the interval (difference in time) within each unique trip_headsign, service_id, stop_id trio
+intervalcalc <- intervalcalc %>%
+  group_by(trip_headsign, service_id, stop_id, stop_name) %>%
+  mutate(interval = c(NA, diff(arrival_time))) %>%
+  ungroup()
+
+intervalcalc_filtered <- intervalcalc[!is.na(intervalcalc$interval), ]
+
+# Calculate the average interval for each unique combination of trip_headsign, service_id, and stop_id
+avg_intervals <- intervalcalc_filtered %>%
+  group_by(trip_headsign, stop_id, stop_name) %>%
+  summarise(avg_interval = mean(interval, na.rm = TRUE))
+```
+
+```{r}
+van_translink_services <- van_translink_trips %>%
+  # Convert arrival_time (hr:min:sec) to seconds
+  mutate(arrival_time_sec = as.numeric(hms(arrival_time))) %>% 
+  group_by(stop_id, direction_id, trip_headsign) %>%
+  summarise(
+    # Step 4: Include fields tied to stop_id
+    stop_sequence = first(stop_sequence),
+    stop_name = first(stop_name),
+    stop_code = first(stop_code),
+    stop_lat = first(stop_lat),
+    stop_lon = first(stop_lon),
+    service_id = first(service_id),
+    block_id = first(block_id),
+    shape_id = first(shape_id),
+    route_id = first(route_id),
+    .groups = "drop" # Ungroup after summarising
+  ) 
+
+van_translink_services = van_translink_services %>%
+  left_join(unique_trip_sums, by = c("trip_headsign", "stop_id", "stop_name")) %>%
+  left_join(avg_intervals, by = c("trip_headsign", "stop_id", "stop_name")) %>%
+  mutate(pctOperating = operating_dates_sum/126*100)
+
+van_translink_services = van_translink_services %>% #remove outliers
+  filter(!is.na(avg_interval),
+         avg_interval != 0.0)
+
+van_translink_services = van_translink_services %>%
+  mutate(frequency_score = pctOperating/100 * log(1+(max(van_translink_services$avg_interval)/avg_interval)))
+```
+
+```{r}
+van_translink_station <- van_translink_services %>%
+  group_by(stop_id, stop_name, stop_lat, stop_lon) %>%
+  summarize(
+    avg_interval = mean(avg_interval, na.rm = TRUE),
+    pctOperating = mean(pctOperating, na.rm = TRUE),
+    frequency_score = mean(frequency_score, na.rm = TRUE),
+    .groups = "drop"  # Ungroup after summarization
+  )
+```
+
+```{r}
+van_indivbuffer = st_read("./data&code/200mIndivBuffer.geojson")
+
+van_indivbuffer$stop_id = as.numeric(van_indivbuffer$stop_id)
+
+van_databuffer = van_indivbuffer %>%
+  left_join(van_translink_station, by = c("stop_id", "stop_name", "stop_lat", "stop_lon"))
+```
+
+```{r, eval=FALSE}
+st_write(van_databuffer, "./data&code/van_databuffer.geojson")
+```
+
+```{r}
+van_dataintersect = st_read("./data&code/van_dataintersect.geojson")
+
+van_datacensus = van_dataintersect %>%
+  group_by(CD_UID, name) %>%
+  summarize(
+    avg_interval = mean(avg_interval, na.rm = TRUE),
+    pctOperating = mean(pctOperating, na.rm = TRUE),
+    frequency_score = mean(frequency_score, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  as.data.frame() %>%
+  dplyr::select(-geometry)
+
+van_datacensus = left_join(vancensus200, van_datacensus, by = c("CD_UID", "name"))
+```
+
+```{r, eval=FALSE}
+st_write(van_datacensus, "./data&code/van_datacensus.geojson")
+```
+
+```{r fig.width = 10, fig.height=7}
+ggplot(van_datacensus) +
+  geom_sf(aes(fill = avg_interval)) +
+  scale_fill_viridis_c(option = "C") +
+  theme_minimal() +
+  theme(axis.text = element_blank(),    
+        axis.ticks = element_blank(),   
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank())
+```
+
+```{r fig.width = 10, fig.height=7}
+ggplot(van_datacensus) +
+  geom_sf(aes(fill = pctOperating)) +
+  scale_fill_viridis_c(option = "C") +
+  theme_minimal() +
+  theme(axis.text = element_blank(),    
+        axis.ticks = element_blank(),   
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank())
+```
+
+```{r fig.width = 10, fig.height=7}
+ggplot(van_datacensus) +
+  geom_sf(aes(fill = frequency_score)) +
+  scale_fill_viridis_c(option = "C") +
+  theme_minimal() +
+  theme(axis.text = element_blank(),    
+        axis.ticks = element_blank(),   
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank())
+```
+
+```{r}
+van_datacensus = van_datacensus %>%
+  mutate(minority_z = (minorityPct - mean(van_datacensus$minorityPct))/sd(van_datacensus$minorityPct),
+         disadvantaged_z = (disadvPopPct - mean(van_datacensus$disadvPopPct))/sd(van_datacensus$disadvPopPct),
+         medinc_z = (medinc - mean(van_datacensus$medinc))/sd(van_datacensus$medinc) * -1,
+         marginalized_score = minority_z + disadvantaged_z + medinc_z)
+```
+
+```{r fig.width = 10, fig.height=7}
+finaldata <- bi_class(van_datacensus, x = frequency_score, y = marginalized_score, style = "quantile", dim = 3)
+
+finalmap <- ggplot() +
+  geom_sf(data = finaldata, mapping = aes(fill = bi_class), color = "white", size = 0.1, show.legend = FALSE) +
+  bi_scale_fill(pal = "GrPink", dim = 3) +
+  theme(axis.text = element_blank(),    
+        axis.ticks = element_blank(),   
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank()) +
+  bi_theme()
+
+finallegend = bi_legend(pal = "GrPink",
+                    dim = 3,
+                    xlab = "Higher Frequency",
+                    ylab = "Higher Marginalized",
+                    size = 6)
+
+finalplot <- ggdraw() +
+  draw_plot(finalmap, 0, 0, 1, 1) +
+  draw_plot(finallegend, 0, 0.15, 0.2, 0.2)
+
+finalplot
+```
+
+```{r}
+lm_model <- lm(frequency_score ~ marginalized_score, data = van_datacensus)
+
+summary(lm_model)
+
+plot(van_datacensus$marginalized_score, van_datacensus$frequency_score, 
+     main = "Vancouver", 
+     xlab = "Underprivileged Score", 
+     ylab = "Frequency Score")
+
+abline(lm_model, col = "red")
+```

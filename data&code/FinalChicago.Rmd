@@ -1,0 +1,541 @@
+---
+title: "TransportationFinal"
+author: "Jack Chen"
+date: "2024-12-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidycensus)
+library(dplyr)
+library(cancensus)
+library(ggplot2)
+library(RColorBrewer)
+library(tidyr)
+library(knitr)
+library(tidyverse)
+library(kableExtra)
+library(terra)
+library(sf)
+library(biscale)
+library(cowplot)
+```
+Vector: short variable code
+Type: variables are provided as aggregates of female responses, male responses, or total (male+female) responses
+Label: detailed variable name
+Units: provides information about whether the variable represents a count integer, a ratio, a percentage, or a currency figure
+Parent_vector: shows the immediate hierarchical parent category for that variable, where appropriate
+Aggregation: indicates how the variable should be aggregated with others, whether it is additive or if it is an average of another variable
+Description: a rough description of a variable based on its hierarchical structure. This is constructed by cancensus by recursively traversing the labels for every variable’s hierarchy, and facilitates searching for specific variables using key terms.     
+
+```{r}
+acs_varlist = c("B02001_001","B02001_003",# total, black
+                        "B02001_005", # asian,
+                        "B02001_004", "B02001_006", "B02001_007", # first nation, non asian aapi, other races
+                        "B19013_001",  # hhinc
+                        "B01001_003", "B01001_027", # <5 male/female, 
+                        "B01001_004", "B01001_028", # 5-9 male/female, 
+                        "B01001_005", "B01001_029", # 10-14 male/female
+                        "B01001_020", "B01001_044", # 65+ male/female v
+                        "B01001_021", "B01001_045",
+                        "B01001_022", "B01001_046",
+                        "B01001_023", "B01001_047",
+                        "B01001_024", "B01001_048",
+                        "B01001_025", "B01001_049")
+```
+
+```{r}
+cooktracts =  
+  get_acs(geography = "tract",
+          variables = acs_varlist, 
+          year=2021, state="IL",
+          county="Cook",
+          geometry=FALSE) 
+```
+
+```{r}
+chitracts = read.csv("./data&code/chicagotracts.csv") %>%
+  rename(geometry = the_geom) %>%
+  st_as_sf(wkt = "geometry", crs = 4326)
+```
+
+```{r}
+cooktracts = cooktracts %>%
+  dplyr::select(-NAME, -moe) %>%
+  spread(key = variable, value = estimate) %>%
+  rename(totPop21 = B02001_001,
+          totBlack = B02001_003,
+          totAsian = B02001_005,
+          totFirstNations = B02001_004,
+          totAAPI = B02001_006,
+          totOther = B02001_007,
+          medinc = B19013_001,
+          male5 = B01001_003,
+          fem5 = B01001_027, # <5 male/female, 
+          male9 = B01001_004,
+          fem9 = B01001_028, # 5-9 male/female, 
+          male14 = B01001_005,
+          fem14 = B01001_029, # 10-14 male/female
+          male66 = B01001_020,
+          fem66 = B01001_044, # 65+ male/female v
+          male69 = B01001_021,
+          fem69 = B01001_045,
+          male74 = B01001_022,
+          fem74 = B01001_046,
+          male79 = B01001_023, 
+          fem79 = B01001_047,
+          male84 = B01001_024, 
+          fem84 = B01001_048,
+          male85 = B01001_025,
+          fem85 = B01001_049) %>%
+mutate(totMinority = totBlack + totAsian + totFirstNations + totAAPI + totOther,
+       minorityPct = totMinority/totPop21,
+       disadvPop = male5+fem5+male9+fem9+male14+fem14+male66+fem66+male69+fem69+male74+fem74+male79+fem79+male84+fem84+male5+fem85,
+       disadvPopPct = disadvPop/totPop21) 
+
+cooktracts = cooktracts %>%
+dplyr::select(-totBlack,-totAsian,-totFirstNations,-totAAPI,-totOther,-male5,-fem5,-male9,-fem9,-male14,-fem14,-male66,-fem66,-male69,-fem69,-male74,-fem74,-male79,-fem79,-male84,-fem84,-male5,-fem85)
+```
+
+```{r}
+ggplot() + 
+  geom_sf(data = chitracts) +
+  geom_sf(data = vanstations) +
+  theme_minimal() +
+  theme(axis.text = element_blank(),    
+        axis.ticks = element_blank(),   
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank()) 
+```
+
+
+```{r fig.width = 10, fig.height = 8}
+cooktracts$GEOID = as.numeric(cooktracts$GEOID)
+
+chitracts.f = chitracts %>%
+  rename(GEOID = GEOID10) %>%
+  left_join(as.data.frame(cooktracts), by = "GEOID") %>%
+  na.omit()
+```
+
+```{r eval=FALSE}
+st_write(chitracts.f, "./data&code/chitracts_f.geojson", append=FALSE)
+```
+
+```{r}
+ctastops = read.csv("./data&code/ctadata/stops.csv")
+chistops = st_as_sf(ctastops, coords = c("stop_lon", "stop_lat"), crs = 4326)
+```
+
+```{r}
+st_write(chistops, "./data&code/chistops.geojson")
+```
+
+```{r fig.width = 8, fig.height = 10}
+chistations = st_read("./data&code/chistations.geojson")
+
+ggplot() + 
+  geom_sf(data = chitracts.f) +
+  geom_sf(data = chistations) +
+  theme_minimal() +
+  theme(axis.text = element_blank(),    
+        axis.ticks = element_blank(), 
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank()) 
+```
+
+```{r}
+intersection200 = st_read("./data&code/chiIntersect200.geojson")
+head(as.data.frame(intersection200))
+
+chitracts200 = chitracts.f %>%
+  left_join(as.data.frame(intersection200) %>%
+              select(NAME10, percentagecover, GEOID, area, intersectarea, -NOTES), by = "GEOID") %>%
+  filter(!is.na(percentagecover),
+         !is.na(medinc),
+         !is.na(totPop21)) %>%
+  na.omit() %>%
+  mutate("covPop" = intersectarea/totPop21,
+         "covPctPop" = percentagecover/totPop21) %>%
+  mutate("weightedCover" = percentagecover*(totPop21/(sum(chitracts200$totPop21))))
+```
+
+```{r eval=FALSE}
+st_write(chitracts200, "./data&code/chitracts.geojson", append=FALSE)
+```
+
+```{r}
+ggplot(chitracts200) +
+  geom_sf(aes(fill = weightedCover)) +
+  scale_fill_viridis_c(option = "C") +
+  theme_minimal() +
+  theme(axis.text = element_blank(),    
+        axis.ticks = element_blank(),   
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank())
+```
+
+```{r fig.width = 10, fig.height=7}
+minoritycover <- bi_class(chitracts200, x = weightedCover, y = minorityPct, style = "quantile", dim = 3)
+
+minoritymap <- ggplot() +
+  geom_sf(data = minoritycover, mapping = aes(fill = bi_class), color = "white", size = 0.1, show.legend = FALSE) +
+  bi_scale_fill(pal = "GrPink", dim = 3) +
+  theme(axis.text = element_blank(),    
+        axis.ticks = element_blank(),   
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank()) +
+  bi_theme()
+
+minoritylegend = bi_legend(pal = "GrPink",
+                    dim = 3,
+                    xlab = "Higher % Station Cover ",
+                    ylab = "Higher % Minority ",
+                    size = 6)
+
+minorityPlot <- ggdraw() +
+  draw_plot(minoritymap, 0, 0, 1, 1) +
+  draw_plot(minoritylegend, 0, 0.15, 0.2, 0.2)
+
+minorityPlot
+```
+
+```{r fig.width = 10, fig.height=7}
+disadvcover <- bi_class(chitracts200, x = weightedCover, y = disadvPopPct, style = "quantile", dim = 3)
+
+disadvmap <- ggplot() +
+  geom_sf(data = disadvcover, mapping = aes(fill = bi_class), color = "white", size = 0.1, show.legend = FALSE) +
+  bi_scale_fill(pal = "GrPink", dim = 3) +
+  theme(axis.text = element_blank(),    
+        axis.ticks = element_blank(),   
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank()) +
+  bi_theme()
+
+disadvlegend = bi_legend(pal = "GrPink",
+                    dim = 3,
+                    xlab = "Higher % Station Cover",
+                    ylab = "Higher % Disadvantaged",
+                    size = 6)
+
+disadvPlot <- ggdraw() +
+  draw_plot(disadvmap, 0, 0, 1, 1) +
+  draw_plot(disadvlegend, 0, 0.15, 0.2, 0.2)
+
+disadvPlot
+```
+
+```{r fig.width = 10, fig.height=7}
+inccover <- bi_class(chitracts200, x = weightedCover, y = medinc, style = "quantile", dim = 3)
+
+incmap <- ggplot() +
+  geom_sf(data = inccover, mapping = aes(fill = bi_class), color = "white", size = 0.1, show.legend = FALSE) +
+  bi_scale_fill(pal = "GrPink", dim = 3) +
+  theme(axis.text = element_blank(),    
+        axis.ticks = element_blank(),   
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank()) +
+  bi_theme()
+
+inclegend = bi_legend(pal = "GrPink",
+                    dim = 3,
+                    xlab = "Higher % Station Cover",
+                    ylab = "Higher Median Income",
+                    size = 6)
+
+incPlot <- ggdraw() +
+  draw_plot(incmap, 0, 0, 1, 1) +
+  draw_plot(inclegend, 0, 0.15, 0.2, 0.2)
+
+incPlot
+```
+
+```{r}
+routes = read.csv("./data&code/ctadata/routes.csv")
+
+trips = read.csv("./data&code/ctadata/trips.csv")
+
+bus_time = trips %>%
+  left_join(routes, by = "route_id") %>%
+  dplyr::select(-route_url, -route_color, -route_text_color)
+```
+
+```{r}
+stop_times = read.csv("./data&code/ctadata/stop_times.csv")
+
+chistations$stop_id = as.numeric(chistations$stop_id)
+
+head(as.data.frame(chistations))
+
+chi_stop_times <- stop_times %>%
+  left_join(chistations, by = "stop_id") %>%
+  dplyr::select(-stop_code, -parent_station, -pickup_type) 
+```
+
+```{r}
+trips_filtered <- bus_time %>%
+  semi_join(chi_stop_times, by = "trip_id")  # Keeps only trip_ids in stop_times_with_info
+
+chi_stop_trips <- chi_stop_times %>%
+  left_join(trips_filtered %>% select(route_id, service_id, trip_id, route_short_name, route_long_name, direction_id, block_id, shape_id),
+            by = "trip_id") %>%
+  filter(!is.na(stop_name))
+
+chi_stop_trips = chi_stop_trips %>%
+  dplyr::select(-shape_dist_traveled, -location_type, -stop_desc)
+```
+
+```{r}
+calendar = read.csv("./data&code/ctadata/calendar.csv")
+
+chi_cal <- chi_stop_trips %>%
+  left_join(calendar %>% select(service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday),
+            by = "service_id") %>%
+  mutate(weekday_avail = monday+tuesday+wednesday+thursday+friday+saturday+sunday)
+```
+
+```{r}
+dates = read.csv("./data&code/ctadata/calendar_dates.csv")
+
+# Step 1: Create a count of exceptions for service_id in the dates dataframe
+exception_counts <- dates %>%
+  filter(exception_type == 1) %>%
+  group_by(service_id) %>%
+  summarize(total_exceptions = n(), .groups = "drop")  
+
+# Step 2: Add operating_dates to final_df_with_calendar
+chi_cta_trips <- chi_cal %>%
+  # Left join with exception counts
+  left_join(exception_counts, by = "service_id") %>%
+  # Create the operating_dates column based on conditions
+  mutate(
+    total_exceptions = case_when(!is.na(total_exceptions) ~ total_exceptions,
+                                 TRUE ~ 0),
+    operating_dates = case_when(monday == 1 & tuesday == 1 ~ total_exceptions + 2 + weekday_avail*11,
+                                monday == 1 & tuesday == 0 ~ total_exceptions + 1 + weekday_avail*11,
+                                monday == 0 & tuesday == 1 ~ total_exceptions + 1 + weekday_avail*11,
+                                TRUE ~ total_exceptions + weekday_avail*11),
+    pctOperating = operating_dates/79*100
+  ) %>%
+  # Drop the total_exceptions column (optional, if not needed further)
+  select(-total_exceptions)
+```
+
+```{r}
+unique_trips = chi_cta_trips %>%
+  dplyr::select(-arrival_time, -trip_id, -departure_time, -block_id, -monday, -tuesday, -wednesday, -thursday, -friday, -saturday, -sunday, -shape_id, -stop_sequence) %>%
+  unique() #%>%
+  #dplyr::select(-service_id)
+
+unique_trip_sums <- unique_trips %>%
+  group_by(route_long_name, stop_id, stop_name) %>%
+  summarise(
+    weekday_avail_sum = sum(weekday_avail, na.rm = TRUE),
+    operating_dates_sum = sum(operating_dates, na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  mutate(operating_dates_sum = case_when(operating_dates_sum > 79 ~ 79,
+                                        TRUE ~ operating_dates_sum)) 
+# Upon inspection, there were days where certain buses while they were already all 7 days of week, but more bus times were added, and therefore should not be counted in operating dates, instead will be calculated below in intervals
+```
+
+```{r}
+intervalcalc = chi_cta_trips %>%
+  dplyr::select(trip_id, arrival_time, stop_id, stop_sequence, stop_name, route_long_name, direction_id, service_id, stop_name)
+
+intervalcalc$arrival_time <- as.numeric(hms(intervalcalc$arrival_time))
+
+intervalcalc <- intervalcalc[order(intervalcalc$route_long_name, intervalcalc$service_id, intervalcalc$stop_id, intervalcalc$arrival_time), ]
+
+# Calculate the interval (difference in time) within each unique route_long_name, service_id, stop_id trio
+intervalcalc <- intervalcalc %>%
+  group_by(route_long_name, service_id, stop_id, stop_name) %>%
+  mutate(interval = c(NA, diff(arrival_time))) %>%
+  ungroup()
+
+intervalcalc_filtered <- intervalcalc[!is.na(intervalcalc$interval), ]
+
+# Calculate the average interval for each unique combination of route_long_name, service_id, and stop_id
+avg_intervals <- intervalcalc_filtered %>%
+  group_by(route_long_name, stop_id, stop_name) %>%
+  summarise(avg_interval = mean(interval, na.rm = TRUE))
+```
+
+```{r}
+chi_cta_services <- chi_cta_trips %>%
+  # Convert arrival_time (hr:min:sec) to seconds
+  mutate(arrival_time_sec = as.numeric(hms(arrival_time))) %>% 
+  group_by(stop_id, direction_id, route_long_name) %>%
+  summarise(
+    # Step 4: Include fields tied to stop_id
+    stop_sequence = first(stop_sequence),
+    stop_name = first(stop_name),
+    stop_headsign = first(stop_headsign),
+    service_id = first(service_id),
+    block_id = first(block_id),
+    shape_id = first(shape_id),
+    route_id = first(route_id),
+    .groups = "drop" # Ungroup after summarising
+  ) 
+
+chi_cta_services = chi_cta_services %>%
+  left_join(unique_trip_sums, by = c("route_long_name", "stop_id", "stop_name")) %>%
+  left_join(avg_intervals, by = c("route_long_name", "stop_id", "stop_name")) %>%
+  mutate(pctOperating = operating_dates_sum/79*100)
+
+chi_cta_services = chi_cta_services %>% #remove outliers
+  filter(!is.na(avg_interval),
+         avg_interval != 0.0)
+
+chi_cta_services = chi_cta_services %>%
+  mutate(frequency_score = pctOperating/100 * log(1+(max(chi_cta_services$avg_interval)/avg_interval)))
+```
+
+```{r}
+chi_cta_station <- chi_cta_services %>%
+  group_by(stop_id, stop_name) %>%
+  summarize(
+    avg_interval = mean(avg_interval, na.rm = TRUE),
+    pctOperating = mean(pctOperating, na.rm = TRUE),
+    frequency_score = mean(frequency_score, na.rm = TRUE),
+    .groups = "drop"  # Ungroup after summarization
+  )
+```
+
+```{r}
+chi_indivbuffer = st_read("./data&code/Chi200IndivBuff.geojson")
+
+chi_indivbuffer$stop_id = as.numeric(chi_indivbuffer$stop_id)
+
+chi_databuffer = chi_indivbuffer %>%
+  left_join(chi_cta_station, by = c("stop_id", "stop_name"))
+```
+
+```{r, eval=FALSE}
+st_write(chi_databuffer, "./data&code/chi_databuffer.geojson", append=FALSE)
+```
+
+```{r}
+chi_dataintersect = st_read("./data&code/chi_dataintersect.geojson")
+
+chi_datacensus = chi_dataintersect %>%
+  as.data.frame() %>%
+  dplyr::select(-geometry) %>%
+  group_by(GEOID, NAME10) %>%
+  summarize(
+    avg_interval = mean(avg_interval, na.rm = TRUE),
+    pctOperating = mean(pctOperating, na.rm = TRUE),
+    frequency_score = mean(frequency_score, na.rm = TRUE),
+    .groups = "drop"
+  ) 
+
+chi_datacensus = left_join(chitracts200 %>% rename(NAME10 = NAME10.x), chi_datacensus, by = c("GEOID", "NAME10"))
+```
+
+```{r, eval=FALSE}
+st_write(chi_datacensus, "./data&code/chi_datacensus.geojson")
+```
+
+```{r fig.width = 10, fig.height=7}
+ggplot(chi_datacensus) +
+  geom_sf(aes(fill = avg_interval)) +
+  scale_fill_viridis_c(option = "C") +
+  theme_minimal() +
+  theme(axis.text = element_blank(),    
+        axis.ticks = element_blank(),   
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank())
+```
+
+```{r fig.width = 10, fig.height=7}
+ggplot(chi_datacensus) +
+  geom_sf(aes(fill = pctOperating)) +
+  scale_fill_viridis_c(option = "C") +
+  theme_minimal() +
+  theme(axis.text = element_blank(),    
+        axis.ticks = element_blank(),   
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank())
+```
+
+```{r fig.width = 10, fig.height=7}
+ggplot(chi_datacensus) +
+  geom_sf(aes(fill = frequency_score)) +
+  scale_fill_viridis_c(option = "C") +
+  theme_minimal() +
+  theme(axis.text = element_blank(),    
+        axis.ticks = element_blank(),   
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank())
+```
+
+```{r}
+chi_datacensus = chi_datacensus %>%
+  mutate(minority_z = (minorityPct - mean(chi_datacensus$minorityPct))/sd(chi_datacensus$minorityPct),
+         disadvantaged_z = (disadvPopPct - mean(chi_datacensus$disadvPopPct))/sd(chi_datacensus$disadvPopPct),
+         medinc_z = (medinc - mean(chi_datacensus$medinc))/sd(chi_datacensus$medinc) * -1,
+         marginalized_score = minority_z + disadvantaged_z + medinc_z)
+```
+
+```{r fig.width = 10, fig.height=7}
+finaldata <- bi_class(chi_datacensus, x = frequency_score, y = marginalized_score, style = "quantile", dim = 3)
+
+finalmap <- ggplot() +
+  geom_sf(data = finaldata, mapping = aes(fill = bi_class), color = "white", size = 0.1, show.legend = FALSE) +
+  bi_scale_fill(pal = "GrPink", dim = 3) +
+  theme(axis.text = element_blank(),    
+        axis.ticks = element_blank(),   
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank()) +
+  bi_theme()
+
+finallegend = bi_legend(pal = "GrPink",
+                    dim = 3,
+                    xlab = "Higher Frequency",
+                    ylab = "Higher Marginalized",
+                    size = 6)
+
+finalplot <- ggdraw() +
+  draw_plot(finalmap, 0, 0, 1, 1) +
+  draw_plot(finallegend, 0, 0.15, 0.2, 0.2)
+
+finalplot
+```
+
+```{r}
+lm_model <- lm(frequency_score ~ marginalized_score, data = chi_datacensus)
+
+summary(lm_model)
+
+plot(chi_datacensus$marginalized_score, chi_datacensus$frequency_score, 
+     main = "Chicago", 
+     xlab = "Underprivileged Score", 
+     ylab = "Frequency Score")
+
+abline(lm_model, col = "red")
+```
+
